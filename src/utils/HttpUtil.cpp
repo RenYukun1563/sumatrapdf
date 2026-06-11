@@ -181,8 +181,16 @@ Exit:
     return ok;
 }
 
-bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* headers, StrBuilder* data) {
-    StrBuilder resp(2048);
+static bool HttpPostImpl(const char* serverA, int port, const char* urlA, StrBuilder* headers, StrBuilder* data,
+                         HttpRsp* rspOut, bool secure) {
+    HttpRsp localRsp;
+    if (!rspOut) {
+        rspOut = &localRsp;
+    }
+    rspOut->error = ERROR_SUCCESS;
+    rspOut->httpStatusCode = (DWORD)-1;
+    rspOut->data.Reset();
+
     bool ok = false;
     char* hdr = nullptr;
     DWORD hdrLen = 0;
@@ -190,8 +198,7 @@ bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* heade
     void* d = nullptr;
     DWORD dLen = 0;
     unsigned int timeoutMs = 15 * 1000;
-    DWORD respHttpCode = 0;
-    DWORD respHttpCodeSize = sizeof(respHttpCode);
+    DWORD respHttpCodeSize = sizeof(rspOut->httpStatusCode);
     DWORD dwRead = 0;
     DWORD flags;
     DWORD dwService;
@@ -202,21 +209,22 @@ bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* heade
     DWORD accessType = INTERNET_OPEN_TYPE_PRECONFIG;
     HINTERNET hInet = InternetOpenW(kUserAgent, accessType, nullptr, nullptr, 0);
     if (!hInet) {
-        goto Exit;
+        goto Error;
     }
     dwService = INTERNET_SERVICE_HTTP;
     hConn = InternetConnectW(hInet, server, (INTERNET_PORT)port, nullptr, nullptr, dwService, 0, 1);
     if (!hConn) {
-        goto Exit;
+        goto Error;
     }
 
-    flags = INTERNET_FLAG_NO_UI;
-    if (port == 443) {
+    flags = INTERNET_FLAG_NO_UI | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD |
+            INTERNET_FLAG_IGNORE_CERT_CN_INVALID;
+    if (secure) {
         flags |= INTERNET_FLAG_SECURE;
     }
     hReq = HttpOpenRequestW(hConn, L"POST", url, nullptr, nullptr, nullptr, flags, 0);
     if (!hReq) {
-        goto Exit;
+        goto Error;
     }
 
     if (headers && headers->size() > 0) {
@@ -232,20 +240,22 @@ bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* heade
     InternetSetOptionW(hReq, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
 
     if (!HttpSendRequestA(hReq, hdr, hdrLen, d, dLen)) {
-        goto Exit;
+        goto Error;
     }
 
     infoLevel = HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER;
-    HttpQueryInfoW(hReq, infoLevel, &respHttpCode, &respHttpCodeSize, nullptr);
+    if (!HttpQueryInfoW(hReq, infoLevel, &rspOut->httpStatusCode, &respHttpCodeSize, nullptr)) {
+        goto Error;
+    }
 
     do {
         char buf[1024];
         if (!InternetReadFile(hReq, buf, sizeof(buf), &dwRead)) {
-            goto Exit;
+            goto Error;
         }
-        ok = resp.Append(buf, dwRead);
+        ok = rspOut->data.Append(buf, dwRead);
         if (!ok) {
-            goto Exit;
+            goto Error;
         }
     } while (dwRead > 0);
 
@@ -257,7 +267,7 @@ bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* heade
         goto Exit;
     }
 #endif
-    ok = (200 == respHttpCode);
+    ok = IsHttpRspOk(rspOut);
 Exit:
     if (hReq) {
         InternetCloseHandle(hReq);
@@ -269,4 +279,68 @@ Exit:
         InternetCloseHandle(hInet);
     }
     return ok;
+
+Error:
+    rspOut->error = GetLastError();
+    if (0 == rspOut->error) {
+        rspOut->error = ERROR_GEN_FAILURE;
+    }
+    goto Exit;
+}
+
+bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* headers, StrBuilder* data, HttpRsp* rspOut) {
+    bool secure = port == 443;
+    return HttpPostImpl(serverA, port, urlA, headers, data, rspOut, secure);
+}
+
+bool HttpPost(const char* serverA, int port, const char* urlA, StrBuilder* headers, StrBuilder* data) {
+    return HttpPost(serverA, port, urlA, headers, data, nullptr);
+}
+
+bool HttpPost(const char* urlA, StrBuilder* headers, StrBuilder* data, HttpRsp* rspOut) {
+    if (!urlA || !rspOut) {
+        return false;
+    }
+    rspOut->url.SetCopy(urlA);
+
+    TempWStr url = ToWStrTemp(urlA);
+    if (!url) {
+        return false;
+    }
+
+    WCHAR host[512]{};
+    WCHAR path[4096]{};
+    WCHAR extra[2048]{};
+    URL_COMPONENTSW parts{};
+    parts.dwStructSize = sizeof(parts);
+    parts.lpszHostName = host;
+    parts.dwHostNameLength = dimof(host);
+    parts.lpszUrlPath = path;
+    parts.dwUrlPathLength = dimof(path);
+    parts.lpszExtraInfo = extra;
+    parts.dwExtraInfoLength = dimof(extra);
+
+    if (!InternetCrackUrlW(url, 0, ICU_ESCAPE, &parts)) {
+        rspOut->error = GetLastError();
+        return false;
+    }
+    if (parts.nScheme != INTERNET_SCHEME_HTTP && parts.nScheme != INTERNET_SCHEME_HTTPS) {
+        rspOut->error = ERROR_INTERNET_UNRECOGNIZED_SCHEME;
+        return false;
+    }
+
+    WStrBuilder targetPath;
+    if (parts.dwUrlPathLength > 0) {
+        targetPath.Append(parts.lpszUrlPath, parts.dwUrlPathLength);
+    } else {
+        targetPath.Append(L"/");
+    }
+    if (parts.dwExtraInfoLength > 0) {
+        targetPath.Append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+    }
+
+    TempStr hostA = ToUtf8Temp(parts.lpszHostName, parts.dwHostNameLength);
+    TempStr targetPathA = ToUtf8Temp(targetPath.Get(), targetPath.size());
+    bool secure = parts.nScheme == INTERNET_SCHEME_HTTPS;
+    return HttpPostImpl(hostA, parts.nPort, targetPathA, headers, data, rspOut, secure);
 }

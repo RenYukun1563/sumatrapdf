@@ -7131,6 +7131,10 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
             }
             break;
 
+        case CmdTranslateSelectionWithLLM:
+            TranslateSelectionWithLLM(tab, false);
+            break;
+
         case CmdTranslateSelectionWithGoogle:
             LaunchBrowserWithSelection(
                 tab, "https://translate.google.com/?op=translate&sl=auto&tl=${userlang}&text=${selection}");

@@ -17,5 +17,7 @@ struct HttpProgress {
 bool IsHttpRspOk(const HttpRsp*);
 
 bool HttpPost(const char* server, int port, const char* url, StrBuilder* headers, StrBuilder* data);
+bool HttpPost(const char* server, int port, const char* url, StrBuilder* headers, StrBuilder* data, HttpRsp* rspOut);
+bool HttpPost(const char* url, StrBuilder* headers, StrBuilder* data, HttpRsp* rspOut);
 bool HttpGet(const char* url, HttpRsp* rspOut);
 bool HttpGetToFile(const char* url, const char* destFilePath, const Func1<HttpProgress*>& cbProgress);

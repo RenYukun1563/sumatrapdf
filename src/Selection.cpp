@@ -4,7 +4,10 @@
 #include "utils/BaseUtil.h"
 #include <UIAutomationCore.h>
 #include <UIAutomationCoreApi.h>
+#include "utils/HttpUtil.h"
+#include "utils/JsonParser.h"
 #include "utils/ScopedWin.h"
+#include "utils/ThreadUtil.h"
 #include "utils/Dpi.h"
 #include "utils/WinUtil.h"
 
@@ -250,6 +253,318 @@ TempStr GetSelectedTextTemp(WindowTab* tab, const char* lineSep, bool& isTextOnl
     return s;
 }
 
+static volatile LONG gSelectionTranslationSerial = 0;
+static constexpr Kind kNotifSelectionTranslation = "selectionTranslation";
+static constexpr const char* kSelectionTranslationPrompt =
+    "You are a translation engine. Translate the user's text to ${targetlang}. Return only the translation.";
+static constexpr const char* kTargetLangStr = "${targetlang}";
+static constexpr const char* kSelectionStr = "${selection}";
+
+static bool IsLatestSelectionTranslation(int requestId) {
+    LONG latest = InterlockedOr(&gSelectionTranslationSerial, 0);
+    return requestId == (int)latest;
+}
+
+static void ShowSelectionTranslationNotification(HWND hwndParent, const char* msg, bool warning, int timeoutMs) {
+    if (!hwndParent || !IsWindow(hwndParent)) {
+        return;
+    }
+
+    NotificationWnd* wnd = GetNotificationForGroup(hwndParent, kNotifSelectionTranslation);
+    if (wnd) {
+        NotificationUpdateMessage(wnd, msg, timeoutMs, warning);
+        return;
+    }
+
+    NotificationCreateArgs args;
+    args.hwndParent = hwndParent;
+    args.groupId = kNotifSelectionTranslation;
+    args.warning = warning;
+    args.timeoutMs = timeoutMs;
+    args.shrinkLimit = 0.8f;
+    args.msg = msg;
+    ShowNotification(args);
+}
+
+static void AppendJsonString(StrBuilder& dst, const char* s) {
+    dst.AppendChar('"');
+    if (s) {
+        for (const char* p = s; *p; p++) {
+            unsigned char c = (unsigned char)*p;
+            switch (c) {
+                case '"':
+                    dst.Append("\\\"");
+                    break;
+                case '\\':
+                    dst.Append("\\\\");
+                    break;
+                case '\b':
+                    dst.Append("\\b");
+                    break;
+                case '\f':
+                    dst.Append("\\f");
+                    break;
+                case '\n':
+                    dst.Append("\\n");
+                    break;
+                case '\r':
+                    dst.Append("\\r");
+                    break;
+                case '\t':
+                    dst.Append("\\t");
+                    break;
+                default:
+                    if (c < 0x20) {
+                        dst.AppendFmt("\\u%04x", (int)c);
+                    } else {
+                        dst.AppendChar((char)c);
+                    }
+                    break;
+            }
+        }
+    }
+    dst.AppendChar('"');
+}
+
+static const char* SkipJsonWs(const char* s) {
+    while (s && str::IsWs(*s)) {
+        s++;
+    }
+    return s;
+}
+
+static char* DupTrimmed(const char* s) {
+    if (!s) {
+        return nullptr;
+    }
+    char* res = str::Dup(s);
+    str::TrimWSInPlace(res, str::TrimOpt::Both);
+    if (str::IsEmpty(res)) {
+        str::Free(res);
+        return nullptr;
+    }
+    return res;
+}
+
+struct TranslationJsonVisitor : json::ValueVisitor {
+    AutoFreeStr content;
+    AutoFreeStr error;
+
+    bool Visit(const char* path, const char* value, json::Type type) override {
+        if (type != json::Type::String) {
+            return true;
+        }
+        if (str::Eq(path, "/choices[0]/message/content") || str::Eq(path, "/choices[0]/text") ||
+            str::Eq(path, "/output_text") || str::Eq(path, "/output[0]/content[0]/text")) {
+            content.SetCopy(value);
+            return false;
+        }
+        if (str::Eq(path, "/error/message")) {
+            error.SetCopy(value);
+        }
+        return true;
+    }
+};
+
+static char* ExtractTranslationFromResponse(const char* response) {
+    const char* s = SkipJsonWs(response);
+    if (!s || !*s) {
+        return nullptr;
+    }
+    if (*s != '{') {
+        return DupTrimmed(s);
+    }
+
+    TranslationJsonVisitor visitor;
+    if (!json::Parse(s, &visitor) || visitor.content.empty()) {
+        return nullptr;
+    }
+    return DupTrimmed(visitor.content.Get());
+}
+
+static char* ExtractErrorFromResponse(const char* response) {
+    const char* s = SkipJsonWs(response);
+    if (!s || *s != '{') {
+        return nullptr;
+    }
+
+    TranslationJsonVisitor visitor;
+    if (!json::Parse(s, &visitor) || visitor.error.empty()) {
+        return nullptr;
+    }
+    return DupTrimmed(visitor.error.Get());
+}
+
+static TempStr HeaderValueTemp(const char* s) {
+    if (str::IsEmptyOrWhiteSpace(s)) {
+        return nullptr;
+    }
+    TempStr res = str::DupTemp(s);
+    str::RemoveCharsInPlace(res, "\r\n");
+    return res;
+}
+
+struct SelectionTranslationData {
+    HWND hwndParent = nullptr;
+    int requestId = 0;
+    AutoFreeStr endpoint;
+    AutoFreeStr apiKey;
+    AutoFreeStr model;
+    AutoFreeStr targetLang;
+    AutoFreeStr systemPrompt;
+    AutoFreeStr selectedText;
+};
+
+struct SelectionTranslationResult {
+    HWND hwndParent = nullptr;
+    int requestId = 0;
+    bool ok = false;
+    AutoFreeStr msg;
+};
+
+static TempStr ExpandTranslationPromptTemp(SelectionTranslationData* data) {
+    const char* prompt = data->systemPrompt.Get();
+    if (str::IsEmptyOrWhiteSpace(prompt)) {
+        prompt = kSelectionTranslationPrompt;
+    }
+    const char* targetLang = data->targetLang.Get();
+    if (str::IsEmptyOrWhiteSpace(targetLang)) {
+        targetLang = "Chinese";
+    }
+
+    TempStr res = str::ReplaceNoCaseTemp(prompt, kTargetLangStr, targetLang);
+    res = str::ReplaceNoCaseTemp(res, kSelectionStr, data->selectedText.Get());
+    return res;
+}
+
+static void BuildTranslationRequestBody(SelectionTranslationData* data, StrBuilder& body) {
+    TempStr prompt = ExpandTranslationPromptTemp(data);
+
+    body.Append("{\"model\":");
+    AppendJsonString(body, data->model.Get());
+    body.Append(",\"messages\":[{\"role\":\"system\",\"content\":");
+    AppendJsonString(body, prompt);
+    body.Append("},{\"role\":\"user\",\"content\":");
+    AppendJsonString(body, data->selectedText.Get());
+    body.Append("}],\"temperature\":0}");
+}
+
+static bool RunSelectionTranslation(SelectionTranslationData* data, AutoFreeStr& msgOut) {
+    StrBuilder headers;
+    headers.Append("Content-Type: application/json\r\n");
+    TempStr apiKey = HeaderValueTemp(data->apiKey.Get());
+    if (apiKey) {
+        headers.AppendFmt("Authorization: Bearer %s\r\n", apiKey);
+    }
+
+    StrBuilder body(4096);
+    BuildTranslationRequestBody(data, body);
+
+    HttpRsp rsp;
+    bool ok = HttpPost(data->endpoint.Get(), &headers, &body, &rsp);
+    if (ok) {
+        char* translated = ExtractTranslationFromResponse(rsp.data.Get());
+        if (translated) {
+            msgOut = translated;
+            return true;
+        }
+        msgOut = str::Dup(_TRA("Translation response did not contain text."));
+        return false;
+    }
+
+    AutoFreeStr err = ExtractErrorFromResponse(rsp.data.Get());
+    if (!err.empty()) {
+        msgOut = str::Format("Translation failed: %s", err.Get());
+    } else if (rsp.httpStatusCode != (DWORD)-1) {
+        msgOut = str::Format("Translation failed (HTTP %u).", (unsigned)rsp.httpStatusCode);
+    } else {
+        msgOut = str::Dup(_TRA("Translation request failed."));
+    }
+    return false;
+}
+
+static void FinishSelectionTranslation(SelectionTranslationResult* result) {
+    if (!IsLatestSelectionTranslation(result->requestId)) {
+        delete result;
+        return;
+    }
+
+    int timeoutMs = result->ok ? 0 : kNotif5SecsTimeOut;
+    ShowSelectionTranslationNotification(result->hwndParent, result->msg.Get(), !result->ok, timeoutMs);
+    delete result;
+}
+
+static void SelectionTranslationThread(SelectionTranslationData* data) {
+    AutoFreeStr msg;
+    bool ok = RunSelectionTranslation(data, msg);
+
+    auto result = new SelectionTranslationResult();
+    result->hwndParent = data->hwndParent;
+    result->requestId = data->requestId;
+    result->ok = ok;
+    result->msg = msg.Release();
+
+    uitask::Post(MkFunc0<SelectionTranslationResult>(FinishSelectionTranslation, result), "SelectionTranslationFinish");
+    delete data;
+}
+
+void TranslateSelectionWithLLM(WindowTab* tab, bool automatic) {
+    if (!gGlobalPrefs || !tab || !tab->win || !tab->selectionOnPage) {
+        return;
+    }
+    if (automatic && !gGlobalPrefs->selectionTranslation.enabled) {
+        return;
+    }
+    if (!HasPermission(Perm::InternetAccess) || !HasPermission(Perm::CopySelection)) {
+        if (!automatic) {
+            ShowSelectionTranslationNotification(tab->win->hwndCanvas, _TRA("Selection translation is not allowed."),
+                                                 true, kNotif5SecsTimeOut);
+        }
+        return;
+    }
+
+    const char* endpoint = gGlobalPrefs->selectionTranslation.endpoint;
+    const char* model = gGlobalPrefs->selectionTranslation.model;
+    if (str::IsEmptyOrWhiteSpace(endpoint) || str::IsEmptyOrWhiteSpace(model)) {
+        if (!automatic) {
+            ShowSelectionTranslationNotification(
+                tab->win->hwndCanvas,
+                _TRA("Configure SelectionTranslation.Endpoint and SelectionTranslation.Model in Advanced Settings."),
+                true, kNotif5SecsTimeOut);
+        }
+        return;
+    }
+
+    bool isTextOnlySelection = false;
+    TempStr selText = GetSelectedTextTemp(tab, "\n", isTextOnlySelection);
+    if (str::IsEmptyOrWhiteSpace(selText)) {
+        return;
+    }
+
+    int maxChars = gGlobalPrefs->selectionTranslation.maxChars;
+    maxChars = limitValue(maxChars <= 0 ? 4000 : maxChars, 128, 16000);
+    TempStr shortened = ShortenStringUtf8Temp(selText, maxChars);
+    AutoFreeStr selected = str::Dup(shortened);
+    str::TrimWSInPlace(selected.Get(), str::TrimOpt::Both);
+    if (selected.empty()) {
+        return;
+    }
+
+    int requestId = (int)InterlockedIncrement(&gSelectionTranslationSerial);
+    auto data = new SelectionTranslationData();
+    data->hwndParent = tab->win->hwndCanvas;
+    data->requestId = requestId;
+    data->endpoint.SetCopy(endpoint);
+    data->apiKey.SetCopy(gGlobalPrefs->selectionTranslation.apiKey);
+    data->model.SetCopy(model);
+    data->targetLang.SetCopy(gGlobalPrefs->selectionTranslation.targetLanguage);
+    data->systemPrompt.SetCopy(gGlobalPrefs->selectionTranslation.systemPrompt);
+    data->selectedText = selected.Release();
+
+    ShowSelectionTranslationNotification(tab->win->hwndCanvas, _TRA("Translating selection..."), false, 0);
+    RunAsync(MkFunc0<SelectionTranslationData>(SelectionTranslationThread, data), "SelectionTranslation");
+}
+
 void CopySelectionToClipboard(MainWindow* win) {
     WindowTab* tab = win->CurrentTab();
     ReportIf(tab->selectionOnPage->size() == 0 && win->mouseAction != MouseAction::SelectingText);
@@ -427,4 +742,7 @@ void OnSelectionStop(MainWindow* win, int x, int y, bool aborted) {
         win->showSelection = win->CurrentTab()->selectionOnPage != nullptr;
     }
     ScheduleRepaint(win, 0);
+    if (!aborted) {
+        TranslateSelectionWithLLM(win->CurrentTab(), true);
+    }
 }

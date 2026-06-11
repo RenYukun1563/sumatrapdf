@@ -233,6 +233,7 @@ CmdOpenWithHtmlHelp,,Open in Microsoft HTML Help,
 CmdOpenWithPdfDjvuBookmarker,,Open in Pdf&Djvu Bookmarker,
 CmdOpenWithPdfXchange,,Open in PDF-XChange,
 CmdOpenWithXpsViewer,,Open in Microsoft Xps Viewer,
+CmdTranslateSelectionWithLLM,,Translate Selection with LLM,ver 3.7+
 CmdTranslateSelectionWithDeepL,,Translate Selection With DeepL,
 CmdTranslateSelectionWithGoogle,,Translate Selection with Google,
 CmdSearchSelectionWithBing,,Search Selection with Bing,

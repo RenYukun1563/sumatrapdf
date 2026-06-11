@@ -242,14 +242,38 @@ int CalcPerc(int current, int total) {
 constexpr int kCloseLeftMargin = 16;
 constexpr int kProgressDy = 5;
 
-void NotificationWnd::Layout(const char* message) {
-    Size szText;
-    {
-        HDC hdc = GetDC(hwnd);
-        uint fmt = DT_SINGLELINE | DT_NOPREFIX;
-        szText = HdcMeasureText(hdc, message, fmt, font);
-        ReleaseDC(hwnd, hdc);
+static int NotificationMaxTextDx(HWND hwnd) {
+    int maxDx = DpiScale(hwnd, 560);
+    HWND parent = GetParent(hwnd);
+    if (parent) {
+        int parentDx = ClientRect(parent).dx - DpiScale(hwnd, 96);
+        if (parentDx > 0 && parentDx < maxDx) {
+            maxDx = parentDx;
+        }
     }
+    int minDx = DpiScale(hwnd, 180);
+    if (maxDx < minDx) {
+        maxDx = minDx;
+    }
+    return maxDx;
+}
+
+static Size MeasureNotificationText(HWND hwnd, const char* message, HFONT font) {
+    HDC hdc = GetDC(hwnd);
+    TempWStr ws = ToWStrTemp(message);
+    ScopedSelectFont f(hdc, font);
+    RECT rc{0, 0, NotificationMaxTextDx(hwnd), 4096};
+    uint fmt = DT_LEFT | DT_NOPREFIX | DT_WORDBREAK | DT_EDITCONTROL | DT_CALCRECT;
+    int dy = DrawTextW(hdc, ws, -1, &rc, fmt);
+    ReleaseDC(hwnd, hdc);
+    if (dy == 0) {
+        return {};
+    }
+    return Size(RectDx(rc), RectDy(rc));
+}
+
+void NotificationWnd::Layout(const char* message) {
+    Size szText = MeasureNotificationText(hwnd, message, font);
 
     int padX = DpiScale(hwnd, 12);
     int padY = DpiScale(hwnd, 8);
@@ -353,7 +377,7 @@ void NotificationWnd::OnPaint(HDC hdcIn, PAINTSTRUCT* ps) {
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, colTxt);
     char* text = HwndGetTextTemp(hwnd);
-    uint format = DT_SINGLELINE | DT_NOPREFIX;
+    uint format = DT_LEFT | DT_NOPREFIX | DT_WORDBREAK | DT_EDITCONTROL;
     RECT rTmp = ToRECT(rTxt);
     HdcDrawText(hdc, text, &rTmp, format);
 

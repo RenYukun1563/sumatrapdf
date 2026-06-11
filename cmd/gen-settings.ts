@@ -392,6 +392,40 @@ const selectionHandler: Field[] = [
   setVersion(mkField("Key", Str, null, "keyboard shortcut"), "3.6"),
 ];
 
+const selectionTranslation: Field[] = [
+  setVersion(
+    mkField(
+      "Enabled",
+      Bool,
+      false,
+      "if true, selected text is automatically translated with the configured LLM endpoint",
+    ),
+    "3.7",
+  ),
+  setVersion(
+    mkField(
+      "Endpoint",
+      Str,
+      "",
+      "OpenAI-compatible chat completions endpoint used for translating selected text",
+    ),
+    "3.7",
+  ),
+  setVersion(mkField("ApiKey", Str, "", "API key sent as a Bearer token; can be empty for local services"), "3.7"),
+  setVersion(mkField("Model", Str, "", "model name to send to the translation endpoint"), "3.7"),
+  setVersion(mkField("TargetLanguage", Str, "Chinese", "language to translate selected text into"), "3.7"),
+  setVersion(
+    mkField(
+      "SystemPrompt",
+      Str,
+      "You are a translation engine. Translate the user's text to ${targetlang}. Return only the translation.",
+      "system prompt for the translation request; ${targetlang} and ${selection} are replaced",
+    ),
+    "3.7",
+  ),
+  setVersion(mkField("MaxChars", Int, 4000, "maximum number of selected UTF-8 characters to send"), "3.7"),
+];
+
 const annotations: Field[] = [
   mkField("HighlightColor", Color, mkRGB(0xff, 0xff, 0x0), "highlight annotation color"),
   mkField("UnderlineColor", Color, mkRGB(0x00, 0xff, 0x0), "underline annotation color"),
@@ -867,6 +901,17 @@ const globalPrefs: Field[] = [
   setExpert(mkStruct("PrinterDefaults", printerDefaults, "these override the default settings in the Print dialog")),
   mkEmptyLine(),
   setVersion(setExpert(mkStruct("Fullscreen", fullscreen, "options for fullscreen mode")), "3.7"),
+  mkEmptyLine(),
+  setVersion(
+    setExpert(
+      mkStruct(
+        "SelectionTranslation",
+        selectionTranslation,
+        "LLM translation for selected text, compatible with OpenAI-style chat completions endpoints",
+      ),
+    ),
+    "3.7",
+  ),
   mkEmptyLine(),
   mkArray(
     "SelectionHandlers",

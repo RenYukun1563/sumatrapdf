@@ -2,6 +2,7 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
   repository_dispatch:
     types: [build-pre-rel]
 jobs:
@@ -26,3 +27,18 @@ jobs:
           BB_SECRET: ${{ secrets.BB_SECRET }}
           BB_ACCESS: ${{ secrets.BB_ACCESS }}
         run: bun .\cmd\build-ci.ts
+
+      - name: Prepare downloadable artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts
+          Copy-Item out\rel64\SumatraPDF-dll.exe artifacts\SumatraPDF-prerel-64-install.exe
+          Copy-Item out\rel64\SumatraPDF.exe artifacts\SumatraPDF-prerel-64-portable.exe
+
+      - name: Upload Windows x64 artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: SumatraPDF-Windows-x64
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

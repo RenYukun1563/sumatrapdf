@@ -611,6 +611,10 @@ static MenuDef menuDefDebug[] = {
 //[ ACCESSKEY_GROUP Context Menu (Selection)
 static MenuDef menuDefSelection[] = {
     {
+        _TRN("Translate with &LLM"),
+        CmdTranslateSelectionWithLLM,
+    },
+    {
         _TRN("&Translate With Google"),
         CmdTranslateSelectionWithGoogle,
     },
@@ -650,6 +654,10 @@ static MenuDef menuDefMainSelection[] = {
     {
         _TRN("&Copy To Clipboard"),
         CmdCopySelection,
+    },
+    {
+        _TRN("Translate with &LLM"),
+        CmdTranslateSelectionWithLLM,
     },
     {
         _TRN("&Translate With Google"),
@@ -1054,6 +1062,7 @@ static UINT_PTR disableIfDirectoryOrBrokenPDF[] = {
 
 UINT_PTR disableIfNoSelection[] = {
     CmdCopySelection,
+    CmdTranslateSelectionWithLLM,
     CmdTranslateSelectionWithDeepL,
     CmdTranslateSelectionWithGoogle,
     CmdSearchSelectionWithWikipedia,
@@ -1085,6 +1094,7 @@ static UINT_PTR menusNoTranslate[] = {
 
 UINT_PTR removeIfNoInternetPerms[] = {
     CmdCheckUpdate,
+    CmdTranslateSelectionWithLLM,
     CmdTranslateSelectionWithGoogle,
     CmdTranslateSelectionWithDeepL,
     CmdSearchSelectionWithGoogle,
@@ -1117,6 +1127,7 @@ UINT_PTR removeIfNoPrefsPerms[] = {
 
 UINT_PTR removeIfNoCopyPerms[] = {
     // TODO: probably those are covered by menuDefSelection
+    CmdTranslateSelectionWithLLM,
     CmdTranslateSelectionWithGoogle,
     CmdTranslateSelectionWithDeepL,
     CmdSearchSelectionWithGoogle,

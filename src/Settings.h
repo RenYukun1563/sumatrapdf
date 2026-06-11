@@ -216,6 +216,28 @@ struct Fullscreen {
     bool showMenubar;
 };
 
+// LLM translation for selected text, compatible with OpenAI-style chat
+// completions endpoints
+struct SelectionTranslation {
+    // if true, selected text is automatically translated with the
+    // configured LLM endpoint
+    bool enabled;
+    // OpenAI-compatible chat completions endpoint used for translating
+    // selected text
+    char* endpoint;
+    // API key sent as a Bearer token; can be empty for local services
+    char* apiKey;
+    // model name to send to the translation endpoint
+    char* model;
+    // language to translate selected text into
+    char* targetLanguage;
+    // system prompt for the translation request; ${targetlang} and
+    // ${selection} are replaced
+    char* systemPrompt;
+    // maximum number of selected UTF-8 characters to send
+    int maxChars;
+};
+
 // list of handlers for selected text, shown in context menu when text
 // selection is active. See [docs for more
 // information](https://www.sumatrapdfreader.org/docs/Customize-search-translation-services)
@@ -549,6 +571,9 @@ struct GlobalPrefs {
     PrinterDefaults printerDefaults;
     // options for fullscreen mode
     Fullscreen fullscreen;
+    // LLM translation for selected text, compatible with OpenAI-style chat
+    // completions endpoints
+    SelectionTranslation selectionTranslation;
     // list of handlers for selected text, shown in context menu when text
     // selection is active. See [docs for more
     // information](https://www.sumatrapdfreader.org/docs/Customize-search-translation-services)
@@ -721,6 +746,21 @@ static const FieldInfo gFullscreenFields[] = {
     {offsetof(Fullscreen, showMenubar), SettingType::Bool, false},
 };
 static const StructInfo gFullscreenInfo = {sizeof(Fullscreen), 2, gFullscreenFields, "ShowToolbar\0ShowMenubar"};
+
+static const FieldInfo gSelectionTranslationFields[] = {
+    {offsetof(SelectionTranslation, enabled), SettingType::Bool, false},
+    {offsetof(SelectionTranslation, endpoint), SettingType::String, (intptr_t)""},
+    {offsetof(SelectionTranslation, apiKey), SettingType::String, (intptr_t)""},
+    {offsetof(SelectionTranslation, model), SettingType::String, (intptr_t)""},
+    {offsetof(SelectionTranslation, targetLanguage), SettingType::String, (intptr_t)"Chinese"},
+    {offsetof(SelectionTranslation, systemPrompt), SettingType::String,
+     (intptr_t)"You are a translation engine. Translate the user's text to ${targetlang}. Return only the "
+               "translation."},
+    {offsetof(SelectionTranslation, maxChars), SettingType::Int, 4000},
+};
+static const StructInfo gSelectionTranslationInfo = {
+    sizeof(SelectionTranslation), 7, gSelectionTranslationFields,
+    "Enabled\0Endpoint\0ApiKey\0Model\0TargetLanguage\0SystemPrompt\0MaxChars"};
 
 static const FieldInfo gSelectionHandlerFields[] = {
     {offsetof(SelectionHandler, url), SettingType::String, 0},
@@ -937,6 +977,8 @@ static const FieldInfo gGlobalPrefsFields[] = {
     {(size_t)-1, SettingType::Comment, 0},
     {offsetof(GlobalPrefs, fullscreen), SettingType::Struct, (intptr_t)&gFullscreenInfo},
     {(size_t)-1, SettingType::Comment, 0},
+    {offsetof(GlobalPrefs, selectionTranslation), SettingType::Struct, (intptr_t)&gSelectionTranslationInfo},
+    {(size_t)-1, SettingType::Comment, 0},
     {offsetof(GlobalPrefs, selectionHandlers), SettingType::Array, (intptr_t)&gSelectionHandlerInfo},
     {(size_t)-1, SettingType::Comment, 0},
     {offsetof(GlobalPrefs, shortcuts), SettingType::Array, (intptr_t)&gShortcutInfo},
@@ -961,7 +1003,7 @@ static const FieldInfo gGlobalPrefsFields[] = {
     {(size_t)-1, SettingType::Comment, (intptr_t)"Settings below are not recognized by the current version"},
 };
 static const StructInfo gGlobalPrefsInfo = {
-    sizeof(GlobalPrefs), 90, gGlobalPrefsFields,
+    sizeof(GlobalPrefs), 92, gGlobalPrefsFields,
     "\0\0CheckForUpdates\0CustomScreenDPI\0DefaultDisplayMode\0DefaultZoom\0EnableTeXEnhancements\0EscToExit\0FullPathI"
     "nTitle\0InverseSearchCmdLine\0LazyLoading\0MainWindowBackground\0NoHomeTab\0HomePageSortByFrequentlyRead\0ReloadMo"
     "difiedDocuments\0RememberOpenedFiles\0RememberStatePerDocument\0RestoreSession\0ReuseInstance\0ShowMenubar\0ShowMe"
@@ -969,9 +1011,9 @@ static const StructInfo gGlobalPrefsInfo = {
     "crollbars\0ScrollbarInSinglePage\0SmoothScroll\0FastScrollOverScrollbar\0PreventSleepInFullscreen\0TabWidth\0Theme"
     "\0TocDy\0ToolbarSize\0TreeFontName\0TreeFontSize\0UIFontSize\0DisableAntiAlias\0UseSysColors\0UseTabs\0TabsMru\0Zo"
     "omLevels\0ZoomIncrement\0\0FixedPageUI\0\0EBookUI\0\0ComicBookUI\0\0ImageUI\0\0ChmUI\0\0Annotations\0\0ExternalVie"
-    "wers\0\0ForwardSearch\0\0PrinterDefaults\0\0Fullscreen\0\0SelectionHandlers\0\0Shortcuts\0\0Themes\0\0TabGroups\0"
-    "\0\0DefaultPasswords\0UiLanguage\0VersionToSkip\0WindowState\0WindowPos\0FileStates\0SessionData\0ReopenOnce\0Time"
-    "OfLastUpdateCheck\0OpenCountWeek\0PropWinPos\0\0"};
+    "wers\0\0ForwardSearch\0\0PrinterDefaults\0\0Fullscreen\0\0SelectionTranslation\0\0SelectionHandlers\0\0Shortcuts"
+    "\0\0Themes\0\0TabGroups\0\0\0DefaultPasswords\0UiLanguage\0VersionToSkip\0WindowState\0WindowPos\0FileStates"
+    "\0SessionData\0ReopenOnce\0TimeOfLastUpdateCheck\0OpenCountWeek\0PropWinPos\0\0"};
 static const FieldInfo gTheme_1_Fields[] = {
     {offsetof(Theme, name), SettingType::String, (intptr_t)""},
     {offsetof(Theme, textColor), SettingType::Color, (intptr_t)""},

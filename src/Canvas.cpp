@@ -1359,6 +1359,7 @@ static void OnMouseLeftButtonDblClk(MainWindow* win, int x, int y, WPARAM key) {
             dm->textSelection->SelectWordAt(pageNo, pt.x, pt.y);
             UpdateTextSelection(win, false);
             ScheduleRepaint(win, 0);
+            TranslateSelectionWithLLM(win->CurrentTab(), true);
         }
         return;
     }

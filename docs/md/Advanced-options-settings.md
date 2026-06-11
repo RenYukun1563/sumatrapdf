@@ -394,6 +394,36 @@ Fullscreen [
     ShowMenubar = false
 ]
 
+; LLM translation for selected text, compatible with OpenAI-style chat completions
+; endpoints (introduced in version 3.7)
+SelectionTranslation [
+    ; if true, selected text is automatically translated with the configured LLM
+    ; endpoint (introduced in version 3.7)
+    Enabled = false
+
+    ; OpenAI-compatible chat completions endpoint used for translating selected
+    ; text (introduced in version 3.7)
+    Endpoint =
+
+    ; API key sent as a Bearer token; can be empty for local services (introduced
+    ; in version 3.7)
+    ApiKey =
+
+    ; model name to send to the translation endpoint (introduced in version 3.7)
+    Model =
+
+    ; language to translate selected text into (introduced in version 3.7)
+    TargetLanguage = Chinese
+
+    ; system prompt for the translation request; ${targetlang} and ${selection}
+    ; are replaced (introduced in version 3.7)
+    SystemPrompt = You are a translation engine. Translate the user's text to ${targetlang}. Return only the translation.
+
+    ; maximum number of selected UTF-8 characters to send (introduced in version
+    ; 3.7)
+    MaxChars = 4000
+]
+
 ; list of handlers for selected text, shown in context menu when text selection
 ; is active. See docs for more information (https://www.sumatrapdfreader.org/docs/Customize-search-translation-services)
 SelectionHandlers [
@@ -647,4 +677,3 @@ The components are hex values (ranging from 00 to FF) and stand for:
 - `bb` : blue component
 
 For example #ff0000 means red color. #7fff0000 is half-transparent red.
-

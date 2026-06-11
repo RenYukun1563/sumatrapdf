@@ -34,3 +34,4 @@ void OnSelectionEdgeAutoscroll(MainWindow* win, int x, int y);
 void OnSelectionStart(MainWindow* win, int x, int y, WPARAM key);
 void OnSelectionStop(MainWindow* win, int x, int y, bool aborted);
 TempStr GetSelectedTextTemp(WindowTab* tab, const char* lineSep, bool& isTextOnlySelectionOut);
+void TranslateSelectionWithLLM(WindowTab* tab, bool automatic);
