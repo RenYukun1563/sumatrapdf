@@ -8,6 +8,7 @@
 #include "utils/JsonParser.h"
 #include "utils/ScopedWin.h"
 #include "utils/ThreadUtil.h"
+#include "utils/UITask.h"
 #include "utils/Dpi.h"
 #include "utils/WinUtil.h"
 
